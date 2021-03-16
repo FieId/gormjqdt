@@ -61,7 +61,7 @@ func (cfg Config) Simple(request RequestString, dest interface{}) (resp Response
 	resp.Data = dest
 
 	// Count filtered record
-	cfg.Engine.Scopes(
+	cfg.Engine.Model(cfg.Model).Scopes(
 		cfg.globalFilter(*req, columns),
 		cfg.individualFilter(*req, columns),
 		cfg.spesificFilter(*req, columns, columnTypes),
