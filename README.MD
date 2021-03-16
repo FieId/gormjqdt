@@ -22,7 +22,7 @@ go get -u github.com/sutejoramadhan/gormjqdt
 ## 🎸 Examples
 Here is common and simple example about how using this module
 ```go
-// Define your struct slice of table mode
+// Define your struct slice of table model
 // Why slice? because Datatable response for the `data` is array. i.e data: [{}]
 var arrayDatas []User
 

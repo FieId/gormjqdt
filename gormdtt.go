@@ -38,6 +38,12 @@ func (cfg Config) Simple(request RequestString, dest interface{}) (resp Response
 	columns := cfg.getDbColumns()
 	columnTypes := cfg.getDbColumnTypes()
 
+	// Handle error
+	err = _errorHandling(req, columns, columnTypes)
+	if err != nil {
+		return
+	}
+
 	// Increment draw request for response draw
 	draw := req.Draw
 	draw++
@@ -294,6 +300,28 @@ func (cfg Config) limit(req ParsedRequest) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		return db.Offset(req.Start).Limit(req.Length)
 	}
+}
+
+// Error handler
+func _errorHandling(req *ParsedRequest, columns map[int]string, columnTypes map[string]reflect.Kind) error {
+	var errTrace string
+
+	switch true {
+	case req == nil:
+		errTrace = fmt.Sprintf("[GORMDTT - Error] Something wrong. ErrTrace: Request: %v", req)
+
+	case columns == nil:
+		errTrace = fmt.Sprintf("[GORMDTT - Error] Something wrong. ErrTrace: Columns: %v", columns)
+
+	case columnTypes == nil:
+		errTrace = fmt.Sprintf("[GORMDTT - Error] Something wrong. ErrTrace: ColumnTypes: %v", columnTypes)
+	}
+
+	if errTrace != "" {
+		return errors.New(errTrace)
+	}
+
+	return nil
 }
 
 // Bind query but using regex
