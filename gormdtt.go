@@ -34,6 +34,7 @@ func New(config ...Config) (Config, error) {
 // Simple to proccess server side pagination with simple approach
 func (cfg Config) Simple(request RequestString, dest interface{}) (resp Response, err error) {
 	var total int64
+	var totalFiltered int64
 	req := ParsingRequest(request)
 	columns := cfg.getDbColumns()
 	columnTypes := cfg.getDbColumnTypes()
@@ -50,17 +51,22 @@ func (cfg Config) Simple(request RequestString, dest interface{}) (resp Response
 	resp.Draw = draw
 
 	// Query building here
-	builder := cfg.Engine.Scopes(
+	cfg.Engine.Scopes(
 		cfg.limit(*req),
 		cfg.globalFilter(*req, columns),
 		cfg.individualFilter(*req, columns),
 		cfg.spesificFilter(*req, columns, columnTypes),
 		cfg.order(*req, columns),
 	).Find(dest)
-
 	resp.Data = dest
-	resp.RecordsTotal = 100
-	resp.RecordsFiltered = builder.RowsAffected
+
+	// Count filtered record
+	cfg.Engine.Scopes(
+		cfg.globalFilter(*req, columns),
+		cfg.individualFilter(*req, columns),
+		cfg.spesificFilter(*req, columns, columnTypes),
+	).Count(&totalFiltered)
+	resp.RecordsFiltered = totalFiltered
 
 	// Count total record
 	err = cfg.Engine.Model(cfg.Model).Count(&total).Error
