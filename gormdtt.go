@@ -271,7 +271,7 @@ func (cfg Config) order(req ParsedRequest, columns map[int]string) func(db *gorm
 					break
 				}
 
-				clientColumnOrderableKey := fmt.Sprintf("columns[%d][orderable]", i)
+				clientColumnOrderableKey := fmt.Sprintf("columns[%d][orderable]", orderedColumnIndex)
 				clientColumnOrderableValue := req.Columns[clientColumnOrderableKey]
 				clientColumnDataKey := fmt.Sprintf("columns[%d][data]", orderedColumnIndex)
 				if req.Columns[clientColumnDataKey] == nil {
