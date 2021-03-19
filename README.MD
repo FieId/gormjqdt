@@ -1,6 +1,9 @@
 # GORMJQDT
 Golang jQuery Datatable Server Side Pagination for gorm
 
+[![MIT license](https://img.shields.io/badge/license-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
+[![Go Reference](https://pkg.go.dev/badge/github.com/sutejoramadhan/gormjqdt.svg)](https://pkg.go.dev/github.com/sutejoramadhan/gormjqdt#section-documentation)
+
 ## 📖 Requirements
 - [Go >= 1.15](https://golang.org/)
 - [GORM >= 1.20.x](https://gorm.io/)
