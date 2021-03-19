@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var getRelations *RelationMappings
+
 // New creates a new gormjqdt (it's like class constructor)
 //    @params config:
 //    Required params are `Model` and `Engine`
@@ -36,8 +38,8 @@ func (cfg Config) Simple(request RequestString, dest interface{}) (resp Response
 	var total int64
 	var totalFiltered int64
 	req := ParsingRequest(request)
-	columns := cfg.getDbColumns()
-	columnTypes := cfg.getDbColumnTypes()
+	columns := GetDbColumns(cfg.Model)
+	columnTypes := GetDbColumnTypes(cfg.Model)
 
 	// Handle error
 	err = _errorHandling(req, columns, columnTypes)
@@ -78,44 +80,60 @@ func (cfg Config) Simple(request RequestString, dest interface{}) (resp Response
 	return
 }
 
-// Is method to retrive all column type collections from go type struct (or model)
-func (cfg Config) getDbColumnTypes() map[string]reflect.Kind {
-	modelFields := GetAllStructField(cfg.Model, true)
-	dbColumnTypes := make(map[string]reflect.Kind)
+// Simple to proccess server side pagination with simple approach
+func (cfg Config) Complex(
+	request RequestString,
+	dest interface{},
+	relations map[int]interface{},
+) (resp Response, err error) {
+	var total int64
+	var totalFiltered int64
+	req := ParsingRequest(request)
+	columns := GetDbColumns(cfg.Model)
+	columnTypes := GetDbColumnTypes(cfg.Model)
 
-	for _, v := range modelFields {
-		var dbColumn string
+	// Realtion setter
+	getRelations = RelationSetters(relations)
 
-		definedColumnByTag, ok := v.FromTag.Lookup("column")
-		if ok {
-			dbColumn = definedColumnByTag
-		}
-		dbColumn = v.SnakeCase
-
-		dbColumnTypes[dbColumn] = v.Kind
+	// Handle error
+	err = _errorHandling(req, columns, columnTypes)
+	if err != nil {
+		return
 	}
 
-	return dbColumnTypes
-}
+	// Increment draw request for response draw
+	draw := req.Draw
+	draw++
+	resp.Draw = draw
 
-// Is method to retrive all column collections from go type struct (or model)
-func (cfg Config) getDbColumns() map[int]string {
-	modelFields := GetAllStructField(cfg.Model, true)
-	dbColumns := make(map[int]string)
+	// Query building here
+	cfg.Engine.Scopes(
+		cfg.joins(*req, *getRelations),
+		cfg.limit(*req),
+		cfg.globalFilter(*req, columns),
+		cfg.individualFilter(*req, columns),
+		cfg.spesificFilter(*req, columns, columnTypes),
+		cfg.order(*req, columns),
+	).Find(dest)
+	resp.Data = dest
 
-	for i, v := range modelFields {
-		var dbColumn string
+	// Count filtered record
+	cfg.Engine.Model(cfg.Model).Scopes(
+		cfg.joins(*req, *getRelations),
+		cfg.globalFilter(*req, columns),
+		cfg.individualFilter(*req, columns),
+		cfg.spesificFilter(*req, columns, columnTypes),
+	).Count(&totalFiltered)
+	resp.RecordsFiltered = totalFiltered
 
-		definedColumnByTag, ok := v.FromTag.Lookup("column")
-		if ok {
-			dbColumn = definedColumnByTag
-		}
-		dbColumn = v.SnakeCase
-
-		dbColumns[i] = dbColumn
+	// Count total record
+	err = cfg.Engine.Model(cfg.Model).Scopes(cfg.joins(*req, *getRelations)).Count(&total).Error
+	if err != nil {
+		return
 	}
+	resp.RecordsTotal = total
 
-	return dbColumns
+	return
 }
 
 // Scopes query to filtering the data by request search (global search) jQuery DataTable
@@ -127,7 +145,11 @@ func (cfg Config) globalFilter(req ParsedRequest, columns map[int]string) func(d
 			for i := 0; ; i++ {
 				clientColumnDataKey := fmt.Sprintf("columns[%d][data]", i)
 				if req.Columns[clientColumnDataKey] == nil {
-					break
+					if i == 0 {
+						continue
+					} else {
+						break
+					}
 				}
 
 				clientColumnSearchableKey := fmt.Sprintf("columns[%d][searchable]", i)
@@ -142,8 +164,10 @@ func (cfg Config) globalFilter(req ParsedRequest, columns map[int]string) func(d
 
 				ok, _ := StringInArraySimple(req.Columns[clientColumnDataKey].(string), columns)
 				if clientColumnSearchableValue == "true" && ok {
-					// query := cfg._castColumn(req.Columns[clientColumnDataKey].(string))
-					column := cfg._castColumn(req.Columns[clientColumnDataKey].(string))
+					// === Comon global search
+					column := req.Columns[clientColumnDataKey].(string)
+					column = fmt.Sprintf(`"%v"."%v"`, db.Statement.Table, column)
+					column = cfg._castColumn(column)
 
 					// Regex and unRegex query binding
 					query := ""
@@ -158,6 +182,40 @@ func (cfg Config) globalFilter(req ParsedRequest, columns map[int]string) func(d
 					}
 
 					globalSearchQuery += query
+				} else if !ok && clientColumnSearchableValue == "true" && getRelations != nil {
+					// === Relations gloabl search
+					column := req.Columns[clientColumnDataKey].(string)
+					// Pluck the last string from clientColumnDataKey
+					if strings.Contains(column, "__") {
+						column = strings.Split(column, "__")[1]
+					}
+
+					// Loop through the given realtions
+					for k, v := range getRelations.ModelSchemaNames {
+						ok, _ := StringInArraySimple(column, getRelations.DbColumns[k])
+						// Skip if key param not match with the relation table columns
+						if !ok {
+							continue
+						}
+
+						// Prepare column
+						column = fmt.Sprintf(`"%v"."%v"`, v, column)
+						column = cfg._castColumn(column)
+
+						// Regex and unRegex query binding
+						query := ""
+						if clientColumnSearchRegexValue {
+							query += cfg._bindQueryRegex(column, req.GlobalSearch)
+						} else {
+							query += cfg._bindQuery(column, req.GlobalSearch)
+						}
+
+						if globalSearchQuery != "" && query != "" {
+							globalSearchQuery += " OR "
+						}
+
+						globalSearchQuery += query
+					}
 				} else {
 					if !ok && clientColumnSearchableValue == "true" {
 						log.Printf("[101 - GORMJQDT WARNING]: Something weird here. InfoTrace: %v", clientColumnDataKey)
@@ -178,7 +236,11 @@ func (cfg Config) individualFilter(req ParsedRequest, columns map[int]string) fu
 		for i := 0; ; i++ {
 			clientColumnDataKey := fmt.Sprintf("columns[%d][data]", i)
 			if req.Columns[clientColumnDataKey] == nil {
-				break
+				if i == 0 {
+					continue
+				} else {
+					break
+				}
 			}
 
 			clientColumnSearchableKey := fmt.Sprintf("columns[%d][searchable]", i)
@@ -195,8 +257,10 @@ func (cfg Config) individualFilter(req ParsedRequest, columns map[int]string) fu
 
 			ok, _ := StringInArraySimple(req.Columns[clientColumnDataKey].(string), columns)
 			if (clientColumnSearchValValue != nil && clientColumnSearchValValue != "") && clientColumnSearchableValue == "true" && ok {
-				// query := cfg._castColumn(req.Columns[clientColumnDataKey].(string))
-				column := cfg._castColumn(req.Columns[clientColumnDataKey].(string))
+				// === Comon individual search
+				column := req.Columns[clientColumnDataKey].(string)
+				column = fmt.Sprintf(`"%v"."%v"`, db.Statement.Table, column)
+				column = cfg._castColumn(column)
 
 				// Regex and unRegex query binding
 				query := ""
@@ -211,8 +275,42 @@ func (cfg Config) individualFilter(req ParsedRequest, columns map[int]string) fu
 				}
 
 				individualSearchQuery += query
+			} else if (clientColumnSearchValValue != nil && clientColumnSearchValValue != "") && clientColumnSearchableValue == "true" && ok && getRelations != nil {
+				// === Relation individual search
+				column := req.Columns[clientColumnDataKey].(string)
+				// Pluck the last string from clientColumnDataKey
+				if strings.Contains(column, "__") {
+					column = strings.Split(column, "__")[1]
+				}
+
+				// Loop through the given realtions
+				for k, v := range getRelations.ModelSchemaNames {
+					ok, _ := StringInArraySimple(column, getRelations.DbColumns[k])
+					// Skip if key param not match with the relation table columns
+					if !ok {
+						continue
+					}
+
+					// Prepare column
+					column = fmt.Sprintf(`"%v"."%v"`, v, column)
+					column = cfg._castColumn(column)
+
+					// Regex and unRegex query binding
+					query := ""
+					if clientColumnSearchRegexValue {
+						query += cfg._bindQueryRegex(column, clientColumnSearchValValue.(string))
+					} else {
+						query += cfg._bindQuery(column, clientColumnSearchValValue.(string))
+					}
+
+					if individualSearchQuery != "" && query != "" {
+						individualSearchQuery += " AND "
+					}
+
+					individualSearchQuery += query
+				}
 			} else {
-				if !ok && clientColumnSearchableValue == "true" {
+				if !ok && clientColumnSearchableValue == "true" && getRelations == nil {
 					log.Printf("[102 - GORMJQDT WARNING]: Something weird here. InfoTrace: %v", clientColumnDataKey)
 				}
 			}
@@ -230,6 +328,8 @@ func (cfg Config) spesificFilter(req ParsedRequest, columns map[int]string, colu
 
 	return func(db *gorm.DB) *gorm.DB {
 		for _, item := range req.SpesificParams {
+			query := ""
+
 			switch item["key"].(type) {
 			case string:
 				requestedColumnKey = item["key"].(string)
@@ -239,12 +339,21 @@ func (cfg Config) spesificFilter(req ParsedRequest, columns map[int]string, colu
 			}
 
 			// If request spesific params not in DB column, skip that
-			if !existInDBColumn {
+			if !existInDBColumn && getRelations == nil {
 				log.Printf("[103 - GORMJQDT WARNING]: Something weird here. InfoTrace: %v not available in DB column", requestedColumnKey)
 				continue
+			} else if !existInDBColumn && getRelations != nil {
+				for k := range getRelations.ModelSchemaNames {
+					query = cfg._bindQuerySpesific(
+						fmt.Sprintf(`"%v"."%v"`, getRelations.ModelSchemaNames[k], requestedColumnKey),
+						item["value"],
+						getRelations.DbColumnTypes[k],
+					)
+				}
+			} else {
+				query = cfg._bindQuerySpesific(requestedColumnKey, item["value"], columnTypes)
 			}
 
-			query := cfg._bindQuerySpesific(requestedColumnKey, item["value"], columnTypes)
 			if spesificSearchQuery != "" && query != "" {
 				spesificSearchQuery += " AND "
 			}
@@ -263,7 +372,11 @@ func (cfg Config) order(req ParsedRequest, columns map[int]string) func(db *gorm
 			for i := 0; ; i++ {
 				clientColumnOrderKey := fmt.Sprintf("order[%d][column]", i)
 				if req.Orders[clientColumnOrderKey] == nil {
-					break
+					if i == 0 {
+						continue
+					} else {
+						break
+					}
 				}
 
 				orderedColumnIndex, err := strconv.Atoi(req.Orders["order[0][column]"].(string))
@@ -305,6 +418,18 @@ func (cfg Config) order(req ParsedRequest, columns map[int]string) func(db *gorm
 func (cfg Config) limit(req ParsedRequest) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		return db.Offset(req.Start).Limit(req.Length)
+	}
+}
+
+// Scopes query to join the table inn given model to table in teh given relations parameter
+func (cfg Config) joins(req ParsedRequest, relations RelationMappings) func(db *gorm.DB) *gorm.DB {
+
+	return func(db *gorm.DB) *gorm.DB {
+		for k, v := range relations.ModelSchemaNames {
+			db.Joins(v).Scopes(cfg.spesificFilter(req, relations.DbColumns[k], relations.DbColumnTypes[k]))
+		}
+
+		return db
 	}
 }
 
@@ -368,10 +493,19 @@ func (cfg Config) _bindQuery(column string, value string) string {
 
 // Bind query with spesific column
 func (cfg Config) _bindQuerySpesific(column string, value interface{}, columnTypes map[string]reflect.Kind) string {
+	columnKey := column
+	queryColumn := column
+
+	// Column checker
+	if strings.Contains(column, ".") {
+		columnKey = strings.Split(column, ".")[1]
+		columnKey = strings.Replace(columnKey, `"`, "", -1)
+	}
+
 	// Safe interface conversion
 	unboxedValue, isArray := ParamsValuesProcessing(value)
 
-	switch columnTypes[column] {
+	switch columnTypes[columnKey] {
 	// If type is integer family
 	case reflect.Int,
 		reflect.Int16,
@@ -387,10 +521,10 @@ func (cfg Config) _bindQuerySpesific(column string, value interface{}, columnTyp
 				return ""
 			}
 
-			return fmt.Sprintf("%s = %d", column, realVal)
+			return fmt.Sprintf("%s = %d", queryColumn, realVal)
 		}
 
-		return fmt.Sprintf("%s IN %s", column, strings.ReplaceAll(unboxedValue, "'", ""))
+		return fmt.Sprintf("%s IN %s", queryColumn, strings.ReplaceAll(unboxedValue, "'", ""))
 
 	// If type is decimal family
 	case reflect.Float32, reflect.Float64:
@@ -400,10 +534,10 @@ func (cfg Config) _bindQuerySpesific(column string, value interface{}, columnTyp
 				return ""
 			}
 
-			return fmt.Sprintf("%s = %f", column, realVal)
+			return fmt.Sprintf("%s = %f", queryColumn, realVal)
 		}
 
-		return fmt.Sprintf("%s IN %s", column, strings.ReplaceAll(unboxedValue, "'", ""))
+		return fmt.Sprintf("%s IN %s", queryColumn, strings.ReplaceAll(unboxedValue, "'", ""))
 
 	// If type is boolean
 	case reflect.Bool:
@@ -413,28 +547,28 @@ func (cfg Config) _bindQuerySpesific(column string, value interface{}, columnTyp
 			value = ""
 		}
 
-		return fmt.Sprintf("%s IS %s TRUE", column, unboxedValue)
+		return fmt.Sprintf("%s IS %s TRUE", queryColumn, unboxedValue)
 
 	// If type is string
 	case reflect.String:
 		if !isArray {
 			if !cfg.CaseSensitiveFilter {
-				column = fmt.Sprintf("LOWER(%s)", column)
+				queryColumn = fmt.Sprintf("LOWER(%s)", queryColumn)
 				unboxedValue = strings.ToLower(unboxedValue)
 			}
 
-			return fmt.Sprintf("%s = '%s'", column, unboxedValue)
+			return fmt.Sprintf("%s = '%s'", queryColumn, unboxedValue)
 		}
 
-		return fmt.Sprintf("%s IN %s", column, unboxedValue)
+		return fmt.Sprintf("%s IN %s", queryColumn, unboxedValue)
 
 	// Maybe UUID, Blob or anything else
 	default:
 		if !isArray {
-			return fmt.Sprintf("%s = '%s'", column, unboxedValue)
+			return fmt.Sprintf("%s = '%s'", queryColumn, unboxedValue)
 		}
 
-		return fmt.Sprintf("%s IN %s", column, unboxedValue)
+		return fmt.Sprintf("%s IN %s", queryColumn, unboxedValue)
 	}
 }
 

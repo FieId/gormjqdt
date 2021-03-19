@@ -1,8 +1,10 @@
 package gormjqdt
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -96,6 +98,23 @@ func ParamsValuesProcessing(i interface{}) (string, bool) {
 			isArray = false
 			unboxedValue = v[0]
 		}
+
+	case []interface{}:
+		ii := i.([]interface{})
+		if len(ii) > 1 {
+			isArray = true
+			var stringSlice []string
+			for _, casv := range ii {
+				stringSlice = append(stringSlice, ConvertInJsonValToString(casv))
+			}
+
+			unboxedValue = "('"
+			unboxedValue += strings.Join(stringSlice, "','")
+			unboxedValue += "')"
+		} else {
+			isArray = false
+			unboxedValue = ConvertInJsonValToString(ii[0])
+		}
 	}
 
 	return unboxedValue, isArray
@@ -115,4 +134,84 @@ func GetValFromSlice(v map[string][]string, key string) string {
 		return ""
 	}
 	return vs[0]
+}
+
+func ConvertInJsonValToString(i interface{}, key ...string) string {
+	switch v := i.(type) {
+	case string:
+		return v
+
+	case bool:
+		return strconv.FormatBool(v)
+
+	case int, float64:
+		return fmt.Sprintf("%v", v)
+
+	case map[string]interface{}:
+		if len(key) <= 0 {
+			return ""
+		}
+		return ConvertInJsonValToString(v[key[0]])
+	}
+
+	return ""
+}
+
+// GetPointerName is method to get slice of pointer names from given slice interface
+func GetPointerName(ins map[int]interface{}) (names map[int]string) {
+	names = make(map[int]string)
+
+	for k, v := range ins {
+		names[k] = reflect.TypeOf(v).String()
+
+		switch true {
+		case strings.Contains(names[k], "."):
+			names[k] = strings.Split(names[k], ".")[1]
+
+		case strings.Contains(names[k], "*"):
+			names[k] = strings.Replace(names[k], "*", "", -1)
+		}
+	}
+
+	return names
+}
+
+// GetDbColumns is method to retrive all column collections from go type struct (or model)
+func GetDbColumns(model interface{}) map[int]string {
+	modelFields := GetAllStructField(model, true)
+	dbColumns := make(map[int]string)
+
+	for i, v := range modelFields {
+		var dbColumn string
+
+		definedColumnByTag, ok := v.FromTag.Lookup("column")
+		if ok {
+			dbColumn = definedColumnByTag
+		}
+		dbColumn = v.SnakeCase
+
+		dbColumns[i] = dbColumn
+	}
+
+	return dbColumns
+}
+
+// GetDbColumnTypes is method to retrive all column type collections from go type struct (or model)
+func GetDbColumnTypes(model interface{}) map[string]reflect.Kind {
+	modelFields := GetAllStructField(model, true)
+	dbColumnTypes := make(map[string]reflect.Kind)
+
+	for _, v := range modelFields {
+		var dbColumn string
+
+		definedColumnByTag, ok := v.FromTag.Lookup("column")
+		if ok {
+			dbColumn = definedColumnByTag
+		}
+		dbColumn = v.SnakeCase
+
+		dbColumnTypes[dbColumn] = v.Kind
+	}
+
+	return dbColumnTypes
 }

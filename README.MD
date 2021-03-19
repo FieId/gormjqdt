@@ -18,6 +18,8 @@ go get -u github.com/sutejoramadhan/gormjqdt
 - Support automatic spesific filter (params besides common jQuery Datatable params).
 - Support array value on spesific filter params
 - Support RegExr filtering
+- Support Json Body
+- Support relation (not yet tested on nested relations)
 
 ## 🎸 Examples
 Here is common and simple example about how using this module
@@ -50,4 +52,4 @@ if err != nil {
 ```
 
 ## 👨‍💻 To-Do
-- Support Json Body (currently only support Form URL Encoded Body (POST) & URL Queries (GET))
+- Improvement and bug fixing

@@ -1,45 +1,48 @@
 package gormjqdt
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 func ParsingRequest(request RequestString) *ParsedRequest {
-	// Initialize map of string
-	var parsed map[string][]string
-
 	switch true {
-	// TODO: Add feature to support Json Body
 	case (strings.Contains(string(request), ",") && strings.Contains(string(request), "{")):
-		// var unboxit map[string]interface{}
-		// json.Unmarshal([]byte(request), &parsed)
-		// log.Printf("unboxit: %v", unboxit)
-		// parsed = unboxit
+		var unboxit map[string]interface{}
+		err := json.Unmarshal([]byte(request), &unboxit)
+		if err != nil {
+			return nil
+		}
+		return parsinJsonRequest(unboxit)
 
 	case strings.Contains(string(request), "&"):
-		unboxit, err := url.ParseQuery(string(request))
-		if err == nil {
-			parsed = unboxit
-		}
-
-	default:
-		return nil
+		unboxit, _ := url.ParseQuery(string(request))
+		return parsingUrlEncodedRequest(unboxit)
 	}
 
-	return request.parsingParameters(parsed)
+	return nil
 }
 
-func (r RequestString) parsingParameters(parsed map[string][]string) *ParsedRequest {
+func parsingUrlEncodedRequest(parsed map[string][]string) *ParsedRequest {
 	// Construct the struct to collect the parsed request
 	parsedReq := &ParsedRequest{}
 	parsedReq.Columns = make(map[string]interface{})
 	parsedReq.Orders = make(map[string]interface{})
 	parsedReq.SpesificParams = make(map[int]map[string]interface{})
 	parsedReq.SpesificParamKeySlices = make(map[string]int)
+
+	// If request has empty or not detected
+	if len(parsed) <= 0 {
+		parsedReq.Draw = 0
+		parsedReq.Start = 0
+		parsedReq.Length = 10
+	}
 
 	// Loop and proccess
 	var i int
@@ -120,6 +123,84 @@ func (r RequestString) parsingParameters(parsed map[string][]string) *ParsedRequ
 					parsedReq.SpesificParams[indexSpesificParamSlice]["value"] = append(v, GetValFromSlice(parsed, key))
 				}
 			}
+		}
+	}
+
+	// Return the parsed request struct
+	return parsedReq
+}
+
+func parsinJsonRequest(parsed map[string]interface{}) *ParsedRequest {
+	// Construct the struct to collect the parsed request
+	parsedReq := &ParsedRequest{}
+	parsedReq.Columns = make(map[string]interface{})
+	parsedReq.Orders = make(map[string]interface{})
+	parsedReq.SpesificParams = make(map[int]map[string]interface{})
+	parsedReq.SpesificParamKeySlices = make(map[string]int)
+
+	var i int
+	for k, v := range parsed {
+		switch true {
+		// Draw
+		case k == "draw":
+			draw, err := strconv.Atoi(ConvertInJsonValToString(v))
+			if err != nil {
+				draw = 0
+			}
+			parsedReq.Draw = draw
+
+		// Start
+		case k == "start":
+			start, err := strconv.Atoi(ConvertInJsonValToString(v))
+			if err != nil || start < 0 {
+				start = 0
+			}
+			parsedReq.Start = start
+
+		// Length
+		case k == "length":
+			length, err := strconv.Atoi(ConvertInJsonValToString(v))
+			if err != nil || length < 0 {
+				length = 10
+			}
+			parsedReq.Length = length
+
+		// Orders
+		case k == "order":
+			for ork, orv := range v.([]interface{}) {
+				parsedReq.Orders[fmt.Sprintf("order[%v][column]", ork)] = ConvertInJsonValToString(orv, "column")
+				parsedReq.Orders[fmt.Sprintf("order[%v][dir]", ork)] = ConvertInJsonValToString(orv, "dir")
+			}
+
+		// Columns
+		case k == "columns":
+			for cok, cov := range v.([]interface{}) {
+				for nek, nev := range cov.(map[string]interface{}) {
+					if fmt.Sprintf("%v", reflect.TypeOf(nev)) == "map[string]interface {}" {
+						for nesk, nesv := range nev.(map[string]interface{}) {
+							parsedReq.Columns[fmt.Sprintf("columns[%v][%v][%v]", cok, nek, nesk)] = ConvertInJsonValToString(nesv, nesk)
+						}
+					} else {
+						parsedReq.Columns[fmt.Sprintf("columns[%v][%v]", cok, nek)] = ConvertInJsonValToString(nev, nek)
+					}
+				}
+			}
+
+		// Global Search
+		case k == "search":
+			parsedReq.GlobalSearch = ConvertInJsonValToString(v, "value")
+			serachRegex, err := strconv.ParseBool(ConvertInJsonValToString(v, "regex"))
+			if err != nil {
+				serachRegex = false
+			}
+			parsedReq.GlobalSearchRegex = serachRegex
+
+		// Spesific Params
+		default:
+			i++
+			parsedReq.SpesificParams[i] = make(map[string]interface{})
+			parsedReq.SpesificParams[i]["key"] = k
+			parsedReq.SpesificParams[i]["value"] = v
 		}
 	}
 
