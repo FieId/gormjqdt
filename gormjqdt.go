@@ -11,7 +11,10 @@ import (
 	"gorm.io/gorm"
 )
 
-var getRelations *RelationMappings
+var (
+	getRelations *RelationMappings
+	queryBetween = ""
+)
 
 // New creates a new gormjqdt (it's like class constructor)
 //    @params config:
@@ -120,7 +123,6 @@ func (cfg Config) Complex(
 	// Count filtered record
 	cfg.Engine.Model(cfg.Model).Scopes(
 		cfg.joins(*req, *getRelations),
-		cfg.globalFilter(*req, columns),
 		cfg.individualFilter(*req, columns),
 		cfg.spesificFilter(*req, columns, columnTypes),
 	).Count(&totalFiltered)
@@ -332,8 +334,15 @@ func (cfg Config) spesificFilter(req ParsedRequest, columns map[int]string, colu
 
 			switch item["key"].(type) {
 			case string:
+				var parsingSpesificKey string
 				requestedColumnKey = item["key"].(string)
-				existInDBColumn, _ = StringInArraySimple(requestedColumnKey, columns)
+				if strings.Contains(requestedColumnKey, "~~") {
+					parsingSpesificKey = strings.Split(requestedColumnKey, "~~")[0]
+				} else {
+					parsingSpesificKey = requestedColumnKey
+				}
+
+				existInDBColumn, _ = StringInArraySimple(parsingSpesificKey, columns)
 			default:
 				existInDBColumn = false
 			}
@@ -425,8 +434,8 @@ func (cfg Config) limit(req ParsedRequest) func(db *gorm.DB) *gorm.DB {
 func (cfg Config) joins(req ParsedRequest, relations RelationMappings) func(db *gorm.DB) *gorm.DB {
 
 	return func(db *gorm.DB) *gorm.DB {
-		for k, v := range relations.ModelSchemaNames {
-			db.Joins(v).Scopes(cfg.spesificFilter(req, relations.DbColumns[k], relations.DbColumnTypes[k]))
+		for _, v := range relations.ModelSchemaNames {
+			db.Joins(v)
 		}
 
 		return db
@@ -505,6 +514,13 @@ func (cfg Config) _bindQuerySpesific(column string, value interface{}, columnTyp
 	// Safe interface conversion
 	unboxedValue, isArray := ParamsValuesProcessing(value)
 
+	// Begin more specify the meaning of params
+	skip, parsed := cfg._parseMoreSpesificParamMeans(column, unboxedValue)
+	if skip {
+		return parsed
+	}
+	// End more specify the meaning of params
+
 	switch columnTypes[columnKey] {
 	// If type is integer family
 	case reflect.Int,
@@ -570,6 +586,39 @@ func (cfg Config) _bindQuerySpesific(column string, value interface{}, columnTyp
 
 		return fmt.Sprintf("%s IN %s", queryColumn, unboxedValue)
 	}
+}
+
+func (cfg Config) _parseMoreSpesificParamMeans(column string, value string) (skip bool, parsed string) {
+	reflectValue := reflect.ValueOf(cfg.Model).MethodByName("TableName")
+	var parentTableName string
+
+	if reflectValue.String() == "<invalid Value>" {
+		parentTableName = reflect.ValueOf(cfg.Model).String()
+	} else {
+		parentTableName = reflectValue.Call([]reflect.Value{})[0].String()
+	}
+
+	switch true {
+	case strings.Contains(column, "~~"):
+		skip = true
+		parsedSplit := strings.Split(column, "~~")
+		column = fmt.Sprintf(`"%v"."%v"`, parentTableName, parsedSplit[0])
+		operator := ""
+		if parsedSplit[1] == "start" {
+			operator += ">="
+		} else {
+			operator += "<="
+		}
+		if queryBetween == "" {
+			queryBetween += fmt.Sprintf("(%v %v '%v'", column, operator, value)
+		} else {
+			queryBetween += fmt.Sprintf(" AND %v %v '%v')", column, operator, value)
+			parsed = queryBetween
+			queryBetween = ""
+		}
+	}
+
+	return
 }
 
 // Casting DB column type based on connected DB dialect
