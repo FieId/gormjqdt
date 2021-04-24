@@ -11,7 +11,7 @@ type RelationMappings struct {
 func RelationSetters(givenRelations map[int]interface{}) *RelationMappings {
 	relMaps := &RelationMappings{}
 
-	// Set model schema names
+	// Set the model schema names
 	relMaps.ModelSchemaNames = GetPointerName(givenRelations)
 
 	// Set DB columns

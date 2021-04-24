@@ -168,7 +168,7 @@ func (cfg Config) globalFilter(req ParsedRequest, columns map[int]string) func(d
 				if clientColumnSearchableValue == "true" && ok {
 					// === Comon global search
 					column := req.Columns[clientColumnDataKey].(string)
-					column = fmt.Sprintf(`"%v"."%v"`, db.Statement.Table, column)
+					column = fmt.Sprintf(`"%v"."%v"`, cfg._getTablename(db), column)
 					column = cfg._castColumn(column)
 
 					// Regex and unRegex query binding
@@ -636,4 +636,15 @@ func (cfg Config) _castColumn(column string) string {
 	}
 
 	return column
+}
+
+func (cfg Config) _getTablename(db *gorm.DB) string {
+	if db.Statement.Table != "" || len(db.Statement.Table) > 0 {
+		return db.Statement.Table
+	}
+
+	stmt := &gorm.Statement{DB: db}
+	stmt.Parse(cfg.Model)
+
+	return stmt.Schema.Table
 }

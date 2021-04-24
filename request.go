@@ -19,7 +19,7 @@ func ParsingRequest(request RequestString) *ParsedRequest {
 		if err != nil {
 			return nil
 		}
-		return parsinJsonRequest(unboxit)
+		return parsingJsonRequest(unboxit)
 
 	case strings.Contains(string(request), "&"):
 		unboxit, _ := url.ParseQuery(string(request))
@@ -130,7 +130,7 @@ func parsingUrlEncodedRequest(parsed map[string][]string) *ParsedRequest {
 	return parsedReq
 }
 
-func parsinJsonRequest(parsed map[string]interface{}) *ParsedRequest {
+func parsingJsonRequest(parsed map[string]interface{}) *ParsedRequest {
 	// Construct the struct to collect the parsed request
 	parsedReq := &ParsedRequest{}
 	parsedReq.Columns = make(map[string]interface{})

@@ -183,12 +183,12 @@ func GetDbColumns(model interface{}) map[int]string {
 
 	for i, v := range modelFields {
 		var dbColumn string
+		var ok bool
 
-		definedColumnByTag, ok := v.FromTag.Lookup("column")
-		if ok {
-			dbColumn = definedColumnByTag
+		dbColumn, ok = v.FromTag.Lookup("column")
+		if !ok {
+			dbColumn = v.SnakeCase
 		}
-		dbColumn = v.SnakeCase
 
 		dbColumns[i] = dbColumn
 	}
@@ -203,12 +203,12 @@ func GetDbColumnTypes(model interface{}) map[string]reflect.Kind {
 
 	for _, v := range modelFields {
 		var dbColumn string
+		var ok bool
 
-		definedColumnByTag, ok := v.FromTag.Lookup("column")
-		if ok {
-			dbColumn = definedColumnByTag
+		dbColumn, ok = v.FromTag.Lookup("column")
+		if !ok {
+			dbColumn = v.SnakeCase
 		}
-		dbColumn = v.SnakeCase
 
 		dbColumnTypes[dbColumn] = v.Kind
 	}
