@@ -568,8 +568,9 @@ func (cfg Config) _bindQuerySpesific(column string, value interface{}, columnTyp
 	// If type is string
 	case reflect.String:
 		if !isArray {
+			queryColumn = cfg._castColumn(queryColumn)
+
 			if !cfg.CaseSensitiveFilter {
-				queryColumn = fmt.Sprintf("LOWER(%s)", queryColumn)
 				unboxedValue = strings.ToLower(unboxedValue)
 			}
 
